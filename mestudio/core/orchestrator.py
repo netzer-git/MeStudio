@@ -524,11 +524,18 @@ class Orchestrator:
         """Remove tool call markers and JSON from text response."""
         import re
         
-        # Remove <|channel|>...<|message|> patterns
-        text = re.sub(r'<\|[^|]+\|>[^<]*', '', text)
+        # Remove all <|...|> special tokens (model control tokens)
+        text = re.sub(r'<\|[^|]+\|>', '', text)
+        
+        # Remove common model directives like "commentary to=functions" etc
+        text = re.sub(r'\b(commentary|constrain|message|channel)\s*(to=)?\w*', '', text, flags=re.IGNORECASE)
         
         # Remove tool call JSON patterns
         text = re.sub(r'\{"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\}', '', text)
+        
+        # Clean up leftover artifacts
+        text = re.sub(r'\bjson\b', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\s{2,}', ' ', text)  # Multiple spaces to single
         
         return text.strip()
 

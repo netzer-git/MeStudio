@@ -58,7 +58,7 @@ class SearchAgent(SubAgent):
             name="SearchAgent",
             system_prompt=SEARCH_AGENT_SYSTEM_PROMPT,
             available_tools=SEARCH_AGENT_TOOLS,
-            max_turns=8,  # Search usually resolves quickly
+            max_turns=12,  # May need multiple searches + page reads
             max_context_tokens=32000,
         )
         super().__init__(

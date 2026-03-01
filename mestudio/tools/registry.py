@@ -237,16 +237,21 @@ class ToolRegistry:
         logger.info(f"Executing tool: {tool_name}")
         logger.debug(f"Arguments: {arguments}")
         
-        # Strip unknown arguments (models sometimes add extra params)
-        if isinstance(arguments, dict) and arguments:
-            import inspect
-            sig = inspect.signature(tool.handler)
-            valid_params = set(sig.parameters.keys())
-            filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
-            if len(filtered_args) < len(arguments):
-                removed = set(arguments.keys()) - set(filtered_args.keys())
-                logger.debug(f"Stripped unknown arguments: {removed}")
-            arguments = filtered_args
+        # Strip invalid arguments (empty keys, unknown params)
+        if isinstance(arguments, dict):
+            # First remove empty string keys and None values
+            arguments = {k: v for k, v in arguments.items() if k and k.strip()}
+            
+            # Then strip unknown arguments (models sometimes add extra params)
+            if arguments:
+                import inspect
+                sig = inspect.signature(tool.handler)
+                valid_params = set(sig.parameters.keys())
+                filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
+                if len(filtered_args) < len(arguments):
+                    removed = set(arguments.keys()) - set(filtered_args.keys())
+                    logger.debug(f"Stripped unknown arguments: {removed}")
+                arguments = filtered_args
         
         # Track calls for loop detection (before cache check)
         call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True, default=str)}"
