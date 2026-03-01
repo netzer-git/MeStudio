@@ -29,16 +29,31 @@ from mestudio.core.models import (
 from mestudio.planner import PlanTracker
 from mestudio.tools.agent_tools import register_agent_handler
 from mestudio.tools.registry import ToolRegistry
+from mestudio.utils.logging import (
+    transcript_user,
+    transcript_assistant,
+    transcript_tool_call,
+    transcript_tool_result,
+    transcript_system,
+)
 
 
 # System prompt for the orchestrator
 ORCHESTRATOR_SYSTEM_PROMPT = """You are MeStudio Agent, a local AI assistant with tool-calling capabilities.
 
 You can:
-- Read, write, search, and edit local files
+- Read, write, search, and edit files anywhere on the user's PC
 - Search the web for information
 - Create and track multi-step plans for complex tasks
 - Delegate focused tasks to sub-agents via delegate_task
+
+File Access:
+- You have UNRESTRICTED file access on this PC
+- Use absolute paths like C:\\Users\\... to access files anywhere
+- Use get_environment_info to discover the user's home, Documents, Desktop, etc.
+- Use list_drives to see available drives (C:\\, D:\\, etc.)
+- Use list_directory with absolute paths to explore (e.g., list_directory("C:\\Users"))
+- Use find_files with patterns like "**/keyword*" to search recursively
 
 Guidelines:
 - For complex multi-step tasks, create a plan first using create_plan
@@ -77,6 +92,10 @@ class OutputHandler(Protocol):
         """Handle an error."""
         ...
 
+    async def on_response_complete(self) -> None:
+        """Handle completion of a response (flush any buffered output)."""
+        ...
+
 
 @dataclass
 class OrchestratorConfig:
@@ -107,18 +126,21 @@ class ConsoleOutputHandler:
 
     async def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
         args_str = ", ".join(f"{k}={v!r}" for k, v in list(arguments.items())[:3])
-        print(f"\n🔧 {name}({args_str})")
+        print(f"\n[tool] {name}({args_str})")
 
     async def on_tool_result(self, name: str, result: str, success: bool) -> None:
-        icon = "✓" if success else "✗"
+        icon = "OK" if success else "X"
         preview = result[:100] + "..." if len(result) > 100 else result
         print(f"   {icon} {preview}")
 
     async def on_compaction(self, level: CompactionLevel) -> None:
-        print(f"\n⚠️  Context compaction: {level.name}")
+        print(f"\n[!] Context compaction: {level.name}")
 
     async def on_error(self, error: str) -> None:
-        print(f"\n❌ Error: {error}")
+        print(f"\n[X] Error: {error}")
+
+    async def on_response_complete(self) -> None:
+        print()  # Newline after response
 
 
 class NullOutputHandler:
@@ -137,6 +159,9 @@ class NullOutputHandler:
         pass
 
     async def on_error(self, error: str) -> None:
+        pass
+
+    async def on_response_complete(self) -> None:
         pass
 
 
@@ -290,7 +315,7 @@ class Orchestrator:
             )
             if compaction_level != CompactionLevel.NONE:
                 await self._output.on_compaction(compaction_level)
-                await self._context.compact(compaction_level)
+                await self._context.trigger_compaction(compaction_level)
                 result.compaction_triggered = compaction_level
             
             # Main tool loop
@@ -357,7 +382,7 @@ class Orchestrator:
                 )
                 if compaction_level != CompactionLevel.NONE:
                     await self._output.on_compaction(compaction_level)
-                    await self._context.compact(compaction_level)
+                    await self._context.trigger_compaction(compaction_level)
                     if result.compaction_triggered == CompactionLevel.NONE:
                         result.compaction_triggered = compaction_level
             
@@ -367,8 +392,13 @@ class Orchestrator:
                 accumulated_response += warning
                 await self._output.on_text_chunk(warning)
             
+            # Log the full assistant response to transcript
+            if accumulated_response:
+                transcript_assistant(accumulated_response)
+            
             result.response = accumulated_response
             result.tokens_used = self._llm_client.session_usage
+            await self._output.on_response_complete()
             
         except Exception as e:
             logger.exception("Error in orchestrator run")
@@ -478,6 +508,9 @@ class Orchestrator:
             except json.JSONDecodeError:
                 args = {}
             
+            # Log to transcript
+            transcript_tool_call(name, args)
+            
             # Notify output handler
             await self._output.on_tool_start(name, args)
             
@@ -498,11 +531,16 @@ class Orchestrator:
                     result = await self._tool_registry.execute(name, args)
                 
                 success = not result.startswith("Error:")
+                
+                # Log result to transcript
+                transcript_tool_result(name, result, success)
+                
                 await self._output.on_tool_result(name, result, success)
                 return result
                 
             except Exception as e:
                 error = f"Error: {type(e).__name__}: {e}"
+                transcript_tool_result(name, error, False)
                 await self._output.on_tool_result(name, error, False)
                 return error
         

@@ -122,6 +122,18 @@ def setup_logging(settings: Settings, session_id: str | None = None) -> str:
             enqueue=True,
         )
     
+    # Session transcript: detailed log for debugging agent behavior
+    # One file per session with full content (messages, tool args, results)
+    transcript_path = log_path.parent / "transcripts" / f"session_{_session_id}.log"
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        str(transcript_path),
+        format="{time:HH:mm:ss.SSS} | {message}",
+        level="DEBUG",
+        filter=lambda record: record["extra"].get("transcript", False),
+        enqueue=True,
+    )
+    
     # Bind session ID to all future log calls
     logger.configure(extra={"session": _session_id})
     
@@ -375,3 +387,43 @@ def log_debug(message: str, **kwargs: Any) -> None:
     """Log a debug message with context."""
     log = get_session_logger()
     log.debug(message, **kwargs)
+
+
+# ============================================================================
+# Session transcript logging (full content for debugging)
+# ============================================================================
+
+def _transcript(message: str) -> None:
+    """Write to session transcript log."""
+    logger.bind(transcript=True, session=_session_id).debug(message)
+
+
+def transcript_user(content: str) -> None:
+    """Log full user message to transcript."""
+    _transcript(f"\n{'='*60}\nUSER:\n{'='*60}\n{content}\n")
+
+
+def transcript_assistant(content: str) -> None:
+    """Log full assistant response to transcript."""
+    _transcript(f"\n{'-'*60}\nASSISTANT:\n{'-'*60}\n{content}\n")
+
+
+def transcript_tool_call(name: str, arguments: dict[str, Any]) -> None:
+    """Log full tool call to transcript."""
+    import json
+    args_str = json.dumps(arguments, indent=2, default=str)
+    _transcript(f"\n>>> TOOL CALL: {name}\nArguments:\n{args_str}\n")
+
+
+def transcript_tool_result(name: str, result: str, success: bool) -> None:
+    """Log full tool result to transcript."""
+    status = "SUCCESS" if success else "FAILED"
+    # Truncate very long results but keep enough for debugging
+    if len(result) > 5000:
+        result = result[:5000] + f"\n... [truncated, {len(result)} chars total]"
+    _transcript(f"<<< TOOL RESULT: {name} [{status}]\n{result}\n")
+
+
+def transcript_system(message: str) -> None:
+    """Log system message to transcript (compaction, errors, etc.)."""
+    _transcript(f"\n[SYSTEM] {message}\n")

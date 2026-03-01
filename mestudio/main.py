@@ -13,12 +13,14 @@ from rich.text import Text
 from mestudio import __version__
 from mestudio.cli.interface import CLIInterface
 from mestudio.core.config import settings
-from mestudio.context.manager import ContextManager
-from mestudio.core.llm_client import LMStudioClient
 from mestudio.core.orchestrator import Orchestrator
-from mestudio.planner.tracker import PlanTracker
-from mestudio.agents.sub_agent import SubAgentSpawner
-from mestudio.tools.registry import ToolRegistry
+from mestudio.utils.logging import (
+    setup_logging,
+    log_session_start,
+    log_session_end,
+    log_user_message,
+    transcript_user,
+)
 
 # Global console for startup messages
 console = Console()
@@ -42,110 +44,39 @@ def show_banner() -> None:
     )
 
 
-async def check_llm_connection(client: LMStudioClient) -> bool:
-    """Check if LM Studio is running and accessible."""
-    try:
-        models = await client.list_models()
-        if models:
-            console.print(f"[green]Connected to LM Studio[/green]")
-            console.print(f"[dim]Using model: {settings.lm_studio_model}[/dim]")
-            return True
-        else:
-            console.print("[yellow]Warning: No models loaded in LM Studio[/yellow]")
-            return True  # Still continue, might work
-    except Exception as e:
-        console.print(f"[red]Cannot connect to LM Studio at {settings.lm_studio_url}[/red]")
-        console.print(f"[dim]Error: {e}[/dim]")
-        console.print("\n[yellow]Make sure LM Studio is running with a model loaded.[/yellow]")
-        return False
-
-
 class AgentApp:
     """Main application that ties all components together."""
 
     def __init__(self, interface: CLIInterface):
         self.interface = interface
-        
-        # Core components
-        self.llm_client = LMStudioClient()
-        self.context_manager = ContextManager()
-        self.tool_registry = ToolRegistry()
-        self.plan_tracker = PlanTracker()
-        self.sub_agent_spawner: SubAgentSpawner | None = None  # Created after orchestrator
         self.orchestrator: Orchestrator | None = None
 
     async def initialize(self) -> bool:
         """Initialize all components. Returns False if critical failure."""
         console.print("[dim]Initializing components...[/dim]")
         
-        # Check LLM connection
-        if not await check_llm_connection(self.llm_client):
+        # Create orchestrator with output handler
+        output_handler = self.interface.create_output_handler()
+        self.orchestrator = Orchestrator(output_handler=output_handler)
+        
+        # Initialize orchestrator (checks LLM connections, etc.)
+        if not await self.orchestrator.initialize():
+            console.print("[red]Cannot connect to LM Studio at {settings.lm_studio_url}[/red]")
+            console.print("\n[yellow]Make sure LM Studio is running with a model loaded.[/yellow]")
             return False
         
-        # Initialize tool registry (registers all built-in tools)
-        # Tools are auto-discovered by the registry
-        tool_count = len(self.tool_registry.list_tools())
+        console.print("[green]Connected to LM Studio[/green]")
+        console.print(f"[dim]Using model: {settings.lm_studio_model}[/dim]")
+        
+        # Show tool count
+        tool_count = len(self.orchestrator.tool_registry.tools)
         console.print(f"[dim]Registered {tool_count} tools[/dim]")
-        
-        # Initialize context with system prompt
-        system_prompt = self._build_system_prompt()
-        self.context_manager.set_system_message(system_prompt)
         console.print(f"[dim]Context initialized ({settings.max_context_tokens} tokens max)[/dim]")
-        
-        # Create orchestrator
-        output_handler = self.interface.create_output_handler()
-        self.orchestrator = Orchestrator(
-            llm_client=self.llm_client,
-            context_manager=self.context_manager,
-            tool_registry=self.tool_registry,
-            plan_tracker=self.plan_tracker,
-            output_handler=output_handler,
-        )
-        
-        # Create sub-agent spawner
-        self.sub_agent_spawner = SubAgentSpawner(
-            llm_client=self.llm_client,
-            tool_registry=self.tool_registry,
-            parent_context=self.context_manager,
-        )
         
         # Register slash command handlers
         self._register_commands()
         
         return True
-
-    def _build_system_prompt(self) -> str:
-        """Build the system prompt for the agent."""
-        tools_info = "\n".join(
-            f"- {name}: {tool.description}"
-            for name, tool in self.tool_registry.list_tools().items()
-        )
-        
-        working_dir = Path(settings.working_directory).resolve()
-        
-        return f"""You are MeStudio Agent, a helpful AI assistant that can execute tasks on the user's computer.
-
-## Capabilities
-You can use the following tools:
-{tools_info}
-
-## Guidelines
-1. **Think step by step** before taking actions
-2. **Ask clarifying questions** if the request is unclear
-3. **Read files** before modifying them to understand context
-4. **Show diffs** when making code changes
-5. **Be safe** - confirm before destructive operations
-6. **Work incrementally** - make small, testable changes
-
-## Working Directory
-Your working directory is: {working_dir}
-{"You can access files anywhere on the system." if not settings.sandbox_file_access else "You are limited to files within this directory."}
-
-## Response Format
-- For simple questions: respond directly
-- For file operations: use the appropriate tool
-- For complex tasks: create a plan first
-- For code changes: show what you're changing and why"""
 
     def _register_commands(self) -> None:
         """Register slash command handlers."""
@@ -158,7 +89,8 @@ Your working directory is: {working_dir}
 
     async def _cmd_plan(self, args: str) -> None:
         """Show current plan."""
-        plan = self.plan_tracker.get_current_plan()
+        assert self.orchestrator is not None
+        plan = self.orchestrator.plan_tracker.get_current_plan()
         if plan:
             self.interface.show_plan({
                 "goal": plan.goal,
@@ -175,23 +107,27 @@ Your working directory is: {working_dir}
 
     async def _cmd_context(self, args: str) -> None:
         """Show context status."""
+        assert self.orchestrator is not None
+        ctx_status = self.orchestrator.context.get_status()
         status = {
-            "used_tokens": self.context_manager.total_tokens,
+            "used_tokens": ctx_status.used_tokens,
             "max_tokens": settings.max_context_tokens,
-            "message_count": len(self.context_manager.messages),
+            "message_count": ctx_status.message_count,
         }
         self.interface.show_context_status(status)
 
     async def _cmd_save(self, args: str) -> None:
         """Save session to a file."""
+        assert self.orchestrator is not None
         label = args.strip() or "default"
-        save_path = Path(settings.working_directory) / ".mestudio_sessions" / f"{label}.json"
+        save_path = Path(settings.working_directory).expanduser() / ".mestudio_sessions" / f"{label}.json"
         save_path.parent.mkdir(parents=True, exist_ok=True)
         
         import json
+        ctx_status = self.orchestrator.context.get_status()
         session_data = {
-            "messages": self.context_manager.messages,
-            "total_tokens": self.context_manager.total_tokens,
+            "messages": [m.model_dump() for m in self.orchestrator.context.messages],
+            "total_tokens": ctx_status.used_tokens,
         }
         with open(save_path, "w") as f:
             json.dump(session_data, f, indent=2)
@@ -200,7 +136,7 @@ Your working directory is: {working_dir}
 
     async def _cmd_load(self, args: str) -> None:
         """Load session from a file."""
-        sessions_dir = Path(settings.working_directory) / ".mestudio_sessions"
+        sessions_dir = Path(settings.working_directory).expanduser() / ".mestudio_sessions"
         if not sessions_dir.exists():
             self.interface.show_info("No saved sessions found")
             return
@@ -225,8 +161,9 @@ Your working directory is: {working_dir}
 
     async def _cmd_clear(self, args: str) -> None:
         """Clear conversation (keep system prompt)."""
+        assert self.orchestrator is not None
         if await self.interface.confirm("Clear all conversation history?"):
-            self.context_manager.clear()
+            self.orchestrator.context.clear()
             self.interface.show_success("Conversation cleared")
 
     async def run(self) -> None:
@@ -234,7 +171,7 @@ Your working directory is: {working_dir}
         assert self.orchestrator is not None
         
         # Show welcome info
-        tool_count = len(self.tool_registry.list_tools())
+        tool_count = len(self.orchestrator.tool_registry.tools)
         self.interface.show_welcome(
             model=settings.lm_studio_model,
             context_size=settings.max_context_tokens,
@@ -261,6 +198,10 @@ Your working directory is: {working_dir}
                     # Command was handled
                     continue
                 
+                # Log user message
+                log_user_message(message)
+                transcript_user(message)
+                
                 # Send to orchestrator
                 try:
                     await self.orchestrator.chat(message)
@@ -270,15 +211,21 @@ Your working directory is: {working_dir}
                 console.print()  # Blank line after response
                 
             except KeyboardInterrupt:
-                console.print()
-                if await self.interface.confirm("Exit MeStudio Agent?"):
-                    break
-                continue
+                # Exit immediately on Ctrl+C
+                console.print("\n[dim]Interrupted.[/dim]")
+                break
+            except EOFError:
+                # Exit on EOF (Ctrl+D on Unix, Ctrl+Z on Windows)
+                break
 
 
 async def main() -> None:
     """Async entry point for the agent."""
+    # Initialize logging first
+    session_id = setup_logging(settings)
+    
     show_banner()
+    console.print(f"[dim]Session: {session_id}[/dim]")
     
     # Create CLI interface
     interface = CLIInterface(console=console)
@@ -288,10 +235,21 @@ async def main() -> None:
     
     if not await app.initialize():
         console.print("[red]Failed to initialize. Exiting.[/red]")
+        log_session_end()
         sys.exit(1)
+    
+    # Log session start
+    log_session_start(
+        python_version=sys.version.split()[0],
+        model=settings.lm_studio_model,
+        max_tokens=settings.max_context_tokens,
+    )
     
     # Run main loop
     await app.run()
+    
+    # Log session end with metrics
+    log_session_end()
     
     console.print("\n[dim]Goodbye![/dim]")
 

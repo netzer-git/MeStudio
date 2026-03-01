@@ -40,7 +40,6 @@ class CLIOutputHandler:
     def __init__(self, interface: "CLIInterface"):
         self.interface = interface
         self._markdown_renderer: StreamingMarkdownRenderer | None = None
-        self._tool_renderer: ToolCallRenderer
 
     async def on_text_chunk(self, text: str) -> None:
         """Handle a streaming text chunk."""
@@ -54,15 +53,13 @@ class CLIOutputHandler:
         # Finish any streaming text first
         self._finish_streaming()
         
-        # Generate a simple ID for tracking
-        call_id = f"{name}_{id(arguments)}"
-        self.interface.tool_renderer.start(call_id, name, arguments)
+        # Show tool starting
+        self.interface.tool_renderer.start(name, arguments)
 
     async def on_tool_result(self, name: str, result: str, success: bool) -> None:
         """Handle tool execution result."""
-        call_id = f"{name}_{id(result)}"  # Won't match but that's ok
-        # Just show result without trying to match ID
-        self.interface.tool_renderer.finish("", name, result, success)
+        # Stop spinner and show result
+        self.interface.tool_renderer.finish(name, result, success)
 
     async def on_compaction(self, level: Any) -> None:
         """Handle context compaction event."""
@@ -76,6 +73,10 @@ class CLIOutputHandler:
         """Handle error event."""
         self._finish_streaming()
         self.interface.error_renderer.render(error)
+
+    async def on_response_complete(self) -> None:
+        """Handle completion of a response (flush buffered output)."""
+        self._finish_streaming()
 
     def _finish_streaming(self) -> None:
         """Finish any in-progress markdown streaming."""
@@ -168,9 +169,9 @@ class CLIInterface:
             )
             return user_input.strip()
         except EOFError:
-            return "/quit"
+            raise  # Let main loop handle exit
         except KeyboardInterrupt:
-            return ""
+            raise  # Let main loop handle Ctrl+C
 
     async def handle_input(self, user_input: str) -> tuple[bool, str | None]:
         """Process user input, handling slash commands.

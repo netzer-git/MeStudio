@@ -30,6 +30,8 @@ Available tools:
 - list_directory: List contents of a directory
 - search_files: Search for patterns in files
 - find_files: Find files by name pattern
+- get_environment_info: Get user home, Documents, Desktop folders, and drives
+- list_drives: List available drives (C:\, D:\, etc.)
 
 After completing the task, provide a concise summary of what you found or did."""
 
@@ -42,6 +44,8 @@ FILE_AGENT_TOOLS = [
     "list_directory",
     "search_files",
     "find_files",
+    "get_environment_info",
+    "list_drives",
 ]
 
 

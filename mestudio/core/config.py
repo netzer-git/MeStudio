@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     response_budget: int = 16_000
 
     # File operations
-    working_directory: str = "."
+    working_directory: str = "~"  # User's home directory by default
     data_directory: str = "./data"
-    sandbox_file_access: bool = True  # If False, agent can access any user-readable file
+    sandbox_file_access: bool = False  # If False, agent can access any user-readable file
 
     # Web / browser
     browser_headless: bool = True
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     @property
     def working_path(self) -> Path:
         """Working directory as a Path object."""
-        return Path(self.working_directory).resolve()
+        return Path(self.working_directory).expanduser().resolve()
 
     @property
     def data_path(self) -> Path:

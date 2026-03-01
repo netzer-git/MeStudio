@@ -21,6 +21,11 @@ from mestudio.utils.logging import (
     log_user_message,
     log_warning,
     setup_logging,
+    transcript_assistant,
+    transcript_system,
+    transcript_tool_call,
+    transcript_tool_result,
+    transcript_user,
 )
 
 __all__ = [
@@ -45,4 +50,9 @@ __all__ = [
     "log_user_message",
     "log_warning",
     "setup_logging",
+    "transcript_assistant",
+    "transcript_system",
+    "transcript_tool_call",
+    "transcript_tool_result",
+    "transcript_user",
 ]

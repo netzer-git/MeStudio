@@ -16,7 +16,7 @@ from mestudio.tools.registry import tool
 def _get_working_dir() -> Path:
     """Get the configured working directory."""
     settings = get_settings()
-    return Path(settings.working_directory).resolve()
+    return Path(settings.working_directory).expanduser().resolve()
 
 
 def _resolve_path(path: str) -> Path:
@@ -34,11 +34,12 @@ def _resolve_path(path: str) -> Path:
     settings = get_settings()
     working_dir = _get_working_dir()
     
-    # Resolve the path
-    if Path(path).is_absolute():
-        resolved = Path(path).resolve()
+    # Resolve the path (handle ~ for home directory)
+    path_obj = Path(path).expanduser()
+    if path_obj.is_absolute():
+        resolved = path_obj.resolve()
     else:
-        resolved = (working_dir / path).resolve()
+        resolved = (working_dir / path_obj).resolve()
     
     # Security check: ensure within working directory (if sandbox enabled)
     if settings.sandbox_file_access:
@@ -91,7 +92,7 @@ def _format_with_line_numbers(content: str, start_line: int = 1) -> str:
 
 @tool(
     name="read_file",
-    description="Read the contents of a file. Returns content with line numbers.",
+    description="Read the contents of a file. Supports absolute paths (e.g., C:\\Users\\...) or relative paths.",
     max_result_tokens=16000,
 )
 async def read_file(
@@ -102,7 +103,7 @@ async def read_file(
     """Read file contents.
     
     Args:
-        path: Path to the file to read (relative to working directory).
+        path: File path (absolute like C:\\Users\\... or relative to working directory).
         start_line: First line to read (1-indexed, inclusive). If omitted, reads from start.
         end_line: Last line to read (1-indexed, inclusive). If omitted, reads to end.
     """
@@ -163,13 +164,13 @@ async def read_file(
 
 @tool(
     name="write_file",
-    description="Write content to a file. Creates parent directories if needed.",
+    description="Write content to a file. Creates parent directories if needed. Supports absolute paths.",
 )
 async def write_file(path: str, content: str) -> str:
     """Write content to a file.
     
     Args:
-        path: Path to the file to write (relative to working directory).
+        path: File path (absolute like C:\\Users\\... or relative to working directory).
         content: Content to write to the file.
     """
     try:
@@ -199,13 +200,13 @@ async def write_file(path: str, content: str) -> str:
 
 @tool(
     name="edit_file",
-    description="Apply search/replace edits to a file. Each 'old' string must match exactly once.",
+    description="Apply search/replace edits to a file. Each 'old' string must match exactly once. Supports absolute paths.",
 )
 async def edit_file(path: str, edits: list[dict[str, str]]) -> str:
     """Apply search/replace edits to a file.
     
     Args:
-        path: Path to the file to edit (relative to working directory).
+        path: File path (absolute like C:\\Users\\... or relative to working directory).
         edits: List of edits, each with 'old' (text to find) and 'new' (replacement text).
     """
     try:
@@ -274,7 +275,7 @@ async def edit_file(path: str, edits: list[dict[str, str]]) -> str:
 
 @tool(
     name="list_directory",
-    description="List contents of a directory in a tree format.",
+    description="List contents of a directory in a tree format. Supports absolute paths (e.g., C:\\ or C:\\Users).",
 )
 async def list_directory(
     path: str = ".",
@@ -284,7 +285,7 @@ async def list_directory(
     """List directory contents.
     
     Args:
-        path: Directory path (relative to working directory). Defaults to working directory.
+        path: Directory path (absolute like C:\\Users or relative). Defaults to working directory.
         recursive: Whether to list subdirectories recursively.
         max_depth: Maximum depth for recursive listing (default: 3).
     """
@@ -338,19 +339,19 @@ async def list_directory(
 
 @tool(
     name="search_files",
-    description="Search for text pattern in files (grep-like). Returns matching lines.",
+    description="Search for text pattern in files (grep-like). Returns matching lines. Supports absolute paths.",
 )
 async def search_files(
     query: str,
     path: str = ".",
     glob: str = "*",
-    max_results: int = 20,
+    max_results: int = 50,
 ) -> str:
     """Search for text in files.
     
     Args:
         query: Text pattern to search for (supports regex).
-        path: Directory to search in (relative to working directory).
+        path: Directory to search in (absolute like C:\\Users or relative).
         glob: File pattern to match (e.g., '*.py', '*.txt').
         max_results: Maximum number of results to return.
     """
@@ -413,7 +414,7 @@ async def search_files(
 
 @tool(
     name="find_files",
-    description="Find files matching a glob pattern.",
+    description="Find files matching a glob pattern. Examples: '*.py', '**/*.json', '**/RPG*'. Supports absolute paths.",
 )
 async def find_files(
     pattern: str,
@@ -423,8 +424,8 @@ async def find_files(
     """Find files by glob pattern.
     
     Args:
-        pattern: Glob pattern to match (e.g., '*.py', '**/*.json').
-        path: Directory to search in (relative to working directory).
+        pattern: Glob pattern (e.g., '*.py' for py files, '**/*.json' recursive, '**/RPG*' folders with RPG).
+        path: Directory to search in (absolute like C:\\Users or relative).
         max_results: Maximum number of results to return.
     """
     try:
@@ -463,6 +464,95 @@ async def find_files(
     return header + "\n\n" + "\n".join(files)
 
 
+@tool(
+    name="get_environment_info",
+    description="Get system environment info: home directory, common user folders (Documents, Desktop, etc.), and available drives.",
+)
+async def get_environment_info() -> str:
+    """Get information about the system environment for file exploration.
+    
+    Returns OS type, home directory, common user folders, and available drives.
+    """
+    import platform
+    import string
+    
+    info = [
+        f"OS: {platform.system()} {platform.release()}",
+        f"Home directory: {Path.home()}",
+        f"Working directory: {Path.cwd()}",
+        f"User: {os.environ.get('USERNAME') or os.environ.get('USER', 'unknown')}",
+        "",
+        "Common user folders:",
+    ]
+    
+    # Common user folders
+    home = Path.home()
+    common_folders = ["Documents", "Desktop", "Downloads", "Pictures", "Videos", "Music"]
+    for folder in common_folders:
+        path = home / folder
+        if path.exists():
+            info.append(f"  {folder}: {path}")
+    
+    # Windows drives
+    if platform.system() == "Windows":
+        info.append("")
+        info.append("Available drives:")
+        drives = [f"{d}:\\" for d in string.ascii_uppercase if Path(f"{d}:\\").exists()]
+        info.append(f"  {', '.join(drives)}")
+    
+    return "\n".join(info)
+
+
+@tool(
+    name="list_drives",
+    description="List available drives on Windows (C:\\, D:\\, etc.). Use this to discover where to search for files.",
+)
+async def list_drives() -> str:
+    """List available drives on the system.
+    
+    On Windows, returns all mounted drive letters.
+    On Linux/Mac, returns mount points.
+    """
+    import platform
+    import string
+    
+    if platform.system() == "Windows":
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive_path = Path(f"{letter}:\\")
+            if drive_path.exists():
+                try:
+                    # Get some info about the drive
+                    total, used, free = 0, 0, 0
+                    try:
+                        import shutil
+                        total, used, free = shutil.disk_usage(drive_path)
+                        total_gb = total / (1024**3)
+                        free_gb = free / (1024**3)
+                        drives.append(f"{letter}:\\ - {total_gb:.1f} GB total, {free_gb:.1f} GB free")
+                    except Exception:
+                        drives.append(f"{letter}:\\")
+                except Exception:
+                    drives.append(f"{letter}:\\")
+        
+        if not drives:
+            return "No drives found"
+        
+        return "Available drives:\n" + "\n".join(drives)
+    else:
+        # Linux/Mac - show mount points
+        try:
+            mounts = []
+            with open("/proc/mounts", "r") as f:
+                for line in f:
+                    parts = line.split()
+                    if parts[1].startswith("/home") or parts[1] == "/" or parts[1].startswith("/mnt"):
+                        mounts.append(f"{parts[1]} ({parts[0]})")
+            return "Mount points:\n" + "\n".join(mounts) if mounts else "/"
+        except Exception:
+            return f"Root: /\nHome: {Path.home()}"
+
+
 # Export all tools for easy registration
 __all__ = [
     "read_file",
@@ -471,5 +561,7 @@ __all__ = [
     "list_directory",
     "search_files",
     "find_files",
+    "get_environment_info",
+    "list_drives",
     "is_binary",
 ]

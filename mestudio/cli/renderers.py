@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
-from rich.console import Console, Group
-from rich.live import Live
+from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.progress import Progress, BarColumn, TextColumn, SpinnerColumn
-from rich.spinner import Spinner
+from rich.progress import Progress, BarColumn, TextColumn
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
@@ -35,50 +32,45 @@ from mestudio.cli.theme import (
 
 
 class StreamingMarkdownRenderer:
-    """Renders streaming markdown content with live updates."""
+    """Renders streaming markdown content.
+    
+    Simplified version that accumulates text and prints at the end
+    to avoid terminal corruption from Live displays.
+    """
 
     def __init__(self, console: Console):
         self.console = console
         self._buffer = ""
-        self._live: Live | None = None
-        self._refresh_rate = 10  # fps
+        self._started = False
 
     def start(self) -> None:
-        """Start the live display."""
+        """Start collecting text."""
         self._buffer = ""
-        self._live = Live(
-            Text("", style=DIM_STYLE),
-            console=self.console,
-            refresh_per_second=self._refresh_rate,
-            transient=True,
-        )
-        self._live.start()
+        self._started = True
+        # Print a simple indicator that response is coming
+        self.console.print("[dim]...[/dim]", end="")
 
     def update(self, chunk: str) -> None:
-        """Add a chunk of text and update display."""
-        if self._live is None:
+        """Add a chunk of text."""
+        if not self._started:
             return
-        
         self._buffer += chunk
-        
-        # Try to render as markdown, fall back to plain text on error
-        try:
-            content = Markdown(self._buffer)
-        except Exception:
-            content = Text(self._buffer)
-        
-        self._live.update(content)
+        # Print dots to show progress (simple approach)
+        if len(self._buffer) % 100 == 0:
+            self.console.print(".", end="")
 
     def finish(self) -> str:
-        """Stop the live display and return final content."""
-        if self._live:
-            self._live.stop()
-            self._live = None
+        """Print the final content."""
+        if not self._started:
+            return ""
         
+        self._started = False
         final = self._buffer
         self._buffer = ""
         
-        # Print final markdown
+        # Clear the progress indicator line and print final content
+        self.console.print()  # New line after dots
+        
         if final.strip():
             try:
                 self.console.print(Markdown(final))
@@ -89,14 +81,13 @@ class StreamingMarkdownRenderer:
 
 
 class ToolCallRenderer:
-    """Renders tool calls with spinners and results."""
+    """Renders tool calls with results."""
 
     def __init__(self, console: Console):
         self.console = console
-        self._active_spinners: dict[str, Live] = {}
 
-    def start(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
-        """Show a spinner for an executing tool."""
+    def start(self, name: str, arguments: dict[str, Any]) -> None:
+        """Show tool starting."""
         icon = get_tool_icon(name)
         
         # Format arguments preview (truncated)
@@ -106,63 +97,46 @@ class ToolCallRenderer:
         if len(arguments) > 3:
             args_preview += ", ..."
         
-        text = Text()
-        text.append(f"{icon} ", style="bold blue")
-        text.append(name, style="bold")
+        # Build display text
+        display = Text()
+        display.append(f"{icon} ", style="bold blue")
+        display.append(name, style="bold")
         if args_preview:
-            text.append(f"({args_preview})", style="dim")
+            display.append(f"({args_preview})", style="dim")
         
-        spinner_text = Group(
-            Spinner("dots", style="blue"),
-            text,
-        )
-        
-        live = Live(
-            spinner_text,
-            console=self.console,
-            refresh_per_second=10,
-            transient=True,
-        )
-        live.start()
-        self._active_spinners[call_id] = live
+        # Print the tool call line
+        self.console.print(display)
 
-    def finish(
-        self, call_id: str, name: str, result: str, success: bool
-    ) -> None:
-        """Replace spinner with result panel."""
-        # Stop spinner
-        if call_id in self._active_spinners:
-            self._active_spinners[call_id].stop()
-            del self._active_spinners[call_id]
-        
-        icon = get_tool_icon(name)
+    def finish(self, name: str, result: str, success: bool) -> None:
+        """Show tool result."""
         status_icon = "OK" if success else "X"
         status_style = SUCCESS_STYLE if success else ERROR_STYLE
         
         # Truncate result preview
-        preview = result[:200]
-        if len(result) > 200:
+        preview = result[:300]
+        if len(result) > 300:
             preview += "..."
         
-        # Build result display
+        # Build result header
         header = Text()
-        header.append(f"{icon} ", style="bold blue")
-        header.append(name, style="bold")
-        header.append(f" [{status_icon}]", style=status_style)
+        header.append(f"  -> ", style="dim")
+        header.append(f"[{status_icon}]", style=status_style)
         
         self.console.print(header)
-        if preview.strip():
-            # Show preview indented
-            for line in preview.split("\n")[:5]:
-                self.console.print(f"   {line}", style="dim")
-            if result.count("\n") > 5:
-                self.console.print(f"   ... ({result.count(chr(10))} lines total)", style="dim")
+        
+        # Show preview if meaningful
+        if preview.strip() and len(preview.strip()) > 0:
+            lines = preview.split("\n")[:5]
+            for line in lines:
+                if line.strip():
+                    self.console.print(f"     {line[:80]}", style="dim")
+            total_lines = result.count("\n") + 1
+            if total_lines > 5:
+                self.console.print(f"     ... ({total_lines} lines total)", style="dim")
 
     def cancel_all(self) -> None:
-        """Cancel all active spinners."""
-        for live in self._active_spinners.values():
-            live.stop()
-        self._active_spinners.clear()
+        """No-op for compatibility."""
+        pass
 
 
 class DiffRenderer:
