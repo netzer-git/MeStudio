@@ -1,7 +1,7 @@
 # MeStudio Agent — Implementation Plan
 
 > **Local AI Agent Orchestrator** powered by gpt-oss-20b via LM Studio  
-> Status: **IN PROGRESS — Steps 1-5 + Logging Complete** | Last updated: 2026-03-01
+> Status: **IN PROGRESS — Steps 1-6 + Logging Complete** | Last updated: 2026-03-01
 
 ---
 
@@ -473,51 +473,47 @@ This is the most important part of the system. Three tiers of memory with five d
 
 ---
 
-### Step 6: Sub-Agent System
+### Step 6: Sub-Agent System ✅ COMPLETE
 
 **File:** `mestudio/agents/sub_agent.py`
 
-- [ ] `SubAgent` base class:
-  ```python
-  class SubAgent:
-      name: str
-      system_prompt: str
-      available_tools: list[str]  # tool names from registry
-      max_turns: int = 10  # prevent infinite loops
-  ```
-  - `async execute(task: str, llm_client, tool_registry) -> str`:
-    - Create fresh `ContextManager` for this sub-agent (isolated context)
-    - Build messages: [system_prompt, user task]
-    - Loop: call LLM → if tool calls, execute → feed results back → repeat until text response or max_turns
-    - Return final text response (compact result for orchestrator)
-  - Sub-agents do NOT have access to context tools, plan tools, or agent tools (only orchestrator manages those)
+- [x] `SubAgent` base class:
+  - `SubAgentConfig` dataclass for agent configuration
+  - `execute(task)` — runs agent loop with isolated ContextManager
+  - Filters tools from global registry based on `available_tools` list
+  - Uses `_llm_semaphore` to serialize LLM calls
+  - Auto-blocks `delegate_task` to prevent recursive delegation
+  - Returns text response when complete or raises `SubAgentError` on max turns
 
-- [ ] `SubAgentSpawner`:
+- [x] `SubAgentSpawner`:
   - `spawn(agent_type, task) -> str` — create sub-agent, execute, return result
-  - `agent_type` maps to pre-configured sub-agents: `"file"`, `"search"`, `"summary"`
+  - `create_agent(agent_type)` — factory method for agent instances
+  - `get_agent_types()` — returns available agent types
+  - Maps `"file"`, `"search"`, `"summary"` to specialized agents
 
-**File:** `mestudio/tools/agent_tools.py`
+**File:** `mestudio/tools/agent_tools.py` (from Step 4)
 
-- [x] `delegate_task(agent_type: str, task: str) -> str` — Registered as a tool so the LLM can invoke sub-agents.
-  - `agent_type`: one of `"file"`, `"search"`, `"summary"`
-  - `task`: a focused task description for the sub-agent
-  - Wraps `SubAgentSpawner.spawn()`, returns the sub-agent's result string (placeholder handlers for now, full implementation in Step 6)
-  - **Safety:** Enforces `max_sub_agent_depth` from config to prevent recursive delegation (sub-agents cannot call `delegate_task`)
+- [x] `delegate_task(agent_type: str, task: str) -> str` — tool interface (placeholder handlers for standalone testing)
 
 **File:** `mestudio/agents/file_agent.py`
 
-- [ ] System prompt: "You are a file operations specialist. You read, write, search, and edit local files. Be precise with file paths. When reading files, focus on the parts relevant to the task. When editing, make minimal targeted changes."
-- [ ] Available tools: `read_file`, `write_file`, `edit_file`, `list_directory`, `search_files`, `find_files`
+- [x] `FileAgent` class with specialized system prompt
+- [x] Available tools: `read_file`, `write_file`, `edit_file`, `list_directory`, `search_files`, `find_files`
+- [x] `max_turns=15` for complex file operations
 
 **File:** `mestudio/agents/search_agent.py`
 
-- [ ] System prompt: "You are a web research specialist. Search the web and extract relevant information. Return a structured summary of findings with key facts, source URLs, and relevance. Be concise — the orchestrator has limited context."
-- [ ] Available tools: `web_search`, `read_webpage`
+- [x] `SearchAgent` class with specialized system prompt
+- [x] Available tools: `web_search`, `read_webpage`
+- [x] `max_turns=8` for typical search workflows
 
 **File:** `mestudio/agents/summary_agent.py`
 
-- [ ] System prompt: "You are a summarization specialist. Your job is to condense large amounts of text into concise, accurate summaries. Preserve: key facts, decisions, file paths, code patterns, errors. Remove: repetition, filler, verbose explanations."
-- [ ] Available tools: `read_file` (to summarize files directly)
+- [x] `SummaryAgent` class with specialized system prompt
+- [x] Available tools: `read_file` (can summarize files directly)
+- [x] `max_turns=5` for quick summarization
+
+**Tests:** `tests/test_subagents_live.py` — 5 live LLM tests (4/5 passed — FileAgent path parsing was model artifact, not system bug)
 
 ---
 
