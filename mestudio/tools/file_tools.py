@@ -430,19 +430,21 @@ async def search_files(
 
 @tool(
     name="find_files",
-    description="Find files matching a glob pattern. Examples: '*.py', '**/*.json', '**/RPG*'. Supports absolute paths.",
+    description="Find files/directories by glob pattern. Use SPECIFIC patterns (e.g., '**/RPG*' not '**/*'). After finding a folder, use list_directory to see contents. Set max_results=20-50 for speed. Defaults to home directory.",
 )
 async def find_files(
     pattern: str,
     path: str = "~",
     max_results: int = 100,
+    include_dirs: bool = True,
 ) -> str:
-    """Find files by glob pattern.
+    """Find files and directories by glob pattern.
     
     Args:
         pattern: Glob pattern (e.g., '*.py' for py files, '**/*.json' recursive, '**/RPG*' folders with RPG).
         path: Directory to search in. Defaults to user's home directory (~). Use absolute paths for other locations.
         max_results: Maximum number of results to return.
+        include_dirs: Include directories in results (default: True). Set False for files only.
     """
     try:
         resolved = _resolve_path(path)
@@ -460,28 +462,33 @@ async def find_files(
     except Exception as e:
         return f"Error searching: {e}"
     
-    # Filter to files only and get relative paths
-    files = []
+    # Get relative paths, optionally including directories
+    results = []
     for match in matches[:max_results]:
         try:
-            if match.is_file():
-                try:
-                    rel = match.relative_to(resolved)
-                    files.append(str(rel))
-                except ValueError:
-                    files.append(str(match))
+            is_dir = match.is_dir()
+            is_file = match.is_file()
         except OSError:
             # Broken symlink - skip
             continue
+        
+        if is_file or (include_dirs and is_dir):
+            try:
+                rel = match.relative_to(resolved)
+                suffix = "/" if is_dir else ""
+                results.append(str(rel) + suffix)
+            except ValueError:
+                results.append(str(match))
     
-    if not files:
-        return f"No files found matching '{pattern}'"
+    if not results:
+        return f"No matches found for '{pattern}'"
     
-    header = f"Found {len(files)} file(s) matching '{pattern}'"
+    item_type = "item(s)" if include_dirs else "file(s)"
+    header = f"Found {len(results)} {item_type} matching '{pattern}'"
     if len(matches) > max_results:
         header += f" (showing first {max_results})"
     
-    return header + "\n\n" + "\n".join(files)
+    return header + "\n\n" + "\n".join(results)
 
 
 @tool(

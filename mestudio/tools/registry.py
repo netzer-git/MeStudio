@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import time
@@ -78,18 +79,65 @@ class ToolRegistry:
 
     _instance: ToolRegistry | None = None
 
+    # Read-only tools whose results can be cached within a turn
+    _CACHEABLE_TOOLS = {
+        "get_environment_info", "list_drives", "list_directory",
+        "find_files", "search_files", "read_file", "context_status",
+        "get_plan", "list_sessions",
+    }
+    _CACHE_TTL_SECONDS = 300  # Cache results for 5 minutes
+
     def __new__(cls) -> ToolRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._tools = {}
             cls._instance._token_counter = get_token_counter()
             cls._instance._default_timeout = 30.0
+            cls._instance._result_cache = {}  # {cache_key: (result, timestamp)}
+            cls._instance._call_history = []  # Track recent calls for loop detection
         return cls._instance
 
     @classmethod
     def reset(cls) -> None:
         """Reset the singleton instance (for testing)."""
         cls._instance = None
+
+    def clear_cache(self) -> None:
+        """Clear the tool result cache."""
+        self._result_cache.clear()
+
+    def reset_call_history(self) -> None:
+        """Reset call history for a new conversation/task."""
+        self._call_history = []
+
+    def _get_cache_key(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        """Generate a cache key for tool call."""
+        args_str = json.dumps(arguments, sort_keys=True, default=str)
+        args_hash = hashlib.md5(args_str.encode()).hexdigest()[:12]
+        return f"{tool_name}:{args_hash}"
+
+    def _get_cached_result(self, cache_key: str) -> str | None:
+        """Get cached result if valid."""
+        if cache_key in self._result_cache:
+            result, timestamp = self._result_cache[cache_key]
+            if time.time() - timestamp < self._CACHE_TTL_SECONDS:
+                return result
+            # Expired, remove it
+            del self._result_cache[cache_key]
+        return None
+
+    def _cache_result(self, cache_key: str, result: str) -> None:
+        """Cache a tool result."""
+        self._result_cache[cache_key] = (result, time.time())
+        # Limit cache size
+        if len(self._result_cache) > 100:
+            # Remove oldest entries
+            sorted_keys = sorted(
+                self._result_cache.keys(),
+                key=lambda k: self._result_cache[k][1]
+            )
+            for key in sorted_keys[:20]:
+                del self._result_cache[key]
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
@@ -189,6 +237,39 @@ class ToolRegistry:
         logger.info(f"Executing tool: {tool_name}")
         logger.debug(f"Arguments: {arguments}")
         
+        # Strip unknown arguments (models sometimes add extra params)
+        if isinstance(arguments, dict) and arguments:
+            import inspect
+            sig = inspect.signature(tool.handler)
+            valid_params = set(sig.parameters.keys())
+            filtered_args = {k: v for k, v in arguments.items() if k in valid_params}
+            if len(filtered_args) < len(arguments):
+                removed = set(arguments.keys()) - set(filtered_args.keys())
+                logger.debug(f"Stripped unknown arguments: {removed}")
+            arguments = filtered_args
+        
+        # Track calls for loop detection (before cache check)
+        call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True, default=str)}"
+        self._call_history.append((call_signature, time.time()))
+        # Keep only last 20 calls from the last 5 minutes
+        cutoff = time.time() - 300
+        self._call_history = [(sig, ts) for sig, ts in self._call_history[-20:] if ts > cutoff]
+        
+        # Detect repetitive patterns - warn if same call made 3+ times
+        recent_identical = sum(1 for sig, _ in self._call_history if sig == call_signature)
+        loop_warning = ""
+        if recent_identical >= 3:
+            loop_warning = f"\n\n[WARNING: This exact tool call has been made {recent_identical} times recently. Consider using the results you already have or trying a different approach.]"
+        
+        # Check cache for read-only tools
+        cache_key = None
+        if tool_name in self._CACHEABLE_TOOLS:
+            cache_key = self._get_cache_key(tool_name, arguments)
+            cached = self._get_cached_result(cache_key)
+            if cached is not None:
+                logger.debug(f"Tool {tool_name} returning cached result")
+                return cached + "\n[cached]" + loop_warning
+        
         start_time = time.perf_counter()
         args_keys = list(arguments.keys()) if isinstance(arguments, dict) else []
 
@@ -211,7 +292,12 @@ class ToolRegistry:
                 result_length=len(result),
             )
             logger.debug(f"Tool {tool_name} completed: {len(result)} chars")
-            return result
+            
+            # Cache successful results for cacheable tools
+            if cache_key is not None:
+                self._cache_result(cache_key, result)
+            
+            return result + loop_warning
 
         except asyncio.TimeoutError:
             error = f"Error: Tool '{tool_name}' timed out after {tool.timeout}s"
@@ -228,8 +314,20 @@ class ToolRegistry:
             return error
 
         except TypeError as e:
-            # Missing/invalid arguments
+            # Missing/invalid arguments - provide helpful usage hint
+            import inspect
+            sig = inspect.signature(tool.handler)
+            params = []
+            for name, param in sig.parameters.items():
+                if param.default == inspect.Parameter.empty:
+                    params.append(f"{name} (required)")
+                else:
+                    params.append(f"{name}={param.default!r}")
+            usage_hint = f"Expected: {', '.join(params)}" if params else ""
+            
             error = f"Error: Invalid arguments for '{tool_name}': {e}"
+            if usage_hint:
+                error += f"\n{usage_hint}"
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log_tool_call(
                 tool_name=tool_name,

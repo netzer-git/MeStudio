@@ -49,12 +49,16 @@ You can:
 
 File Access:
 - You have UNRESTRICTED file access on this PC
-- ALWAYS start file searches from the user's HOME directory, not the working directory
-- Use get_environment_info FIRST to discover the user's home folder, Documents, Desktop, etc.
-- Use list_drives to see available drives (C:\\, D:\\, etc.)
-- Use absolute paths like C:\\Users\\username\\... (get the actual username from get_environment_info)
-- Use find_files with patterns like "**/keyword*" - it defaults to searching from home directory
-- Common user files are in: Documents, Desktop, Downloads, Dropbox, OneDrive
+- Use get_environment_info ONCE at the start to discover user's home folder
+- Common user folders: Documents, Desktop, Downloads, Dropbox, OneDrive
+- Use SPECIFIC searches - don't scan the entire home with broad patterns
+
+Search Strategy (IMPORTANT):
+1. If user mentions a specific folder (like "Dropbox"), search THERE directly
+2. Use targeted patterns: "**/RPG*" is better than "**/*"
+3. AFTER finding a folder, use list_directory to see what's inside
+4. If a folder doesn't exist, tell the user - don't keep searching
+5. Limit max_results to 20-50 for faster results
 
 Guidelines:
 - For complex multi-step tasks, create a plan first using create_plan
@@ -65,9 +69,13 @@ Guidelines:
 - Be concise in your responses — context is precious
 - When reading files, request only the lines you need
 - When tool results are large, summarize the key findings before responding
-- Always report your progress on the current plan step
-- If a plan is wrong or outdated, use cancel_plan or replace_plan to fix it
-- When you have completed a task, provide a clear summary of what was done"""
+- When you have completed a task, provide a clear summary of what was done
+
+AVOID REDUNDANT CALLS:
+- NEVER call get_environment_info more than once - results are cached
+- NEVER call the same tool with the same arguments twice
+- Once you have the information you need, STOP and answer the user
+- If you've called a tool 3+ times without progress, summarize what you found and respond"""
 
 
 class OutputHandler(Protocol):
@@ -471,7 +479,58 @@ class Orchestrator:
                         ),
                     ))
         
+        # Fallback: try to extract tool calls from text if model outputs them as text
+        # Some models output tool calls as text like: {"name":"tool_name","arguments":{...}}
+        if not tool_calls and text_response:
+            extracted = self._extract_tool_calls_from_text(text_response)
+            if extracted:
+                tool_calls = extracted
+                # Remove the tool call JSON from text response
+                text_response = self._clean_tool_call_text(text_response)
+        
         return text_response, tool_calls
+    
+    def _extract_tool_calls_from_text(self, text: str) -> list[ToolCall] | None:
+        """Try to extract tool calls from text response.
+        
+        Some models output tool calls as JSON in text instead of using the API.
+        """
+        import re
+        import uuid
+        
+        tool_calls = []
+        
+        # Pattern to match {"name": "...", "arguments": {...}}
+        pattern = r'\{"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\}|\[\]|\{\})\}'
+        
+        for match in re.finditer(pattern, text):
+            name = match.group(1)
+            arguments = match.group(2)
+            
+            # Verify this is a valid tool
+            if name in self._tool_registry.tools:
+                tool_calls.append(ToolCall(
+                    id=f"call_{uuid.uuid4().hex[:8]}",
+                    type="function",
+                    function=FunctionCall(
+                        name=name,
+                        arguments=arguments,
+                    ),
+                ))
+        
+        return tool_calls if tool_calls else None
+    
+    def _clean_tool_call_text(self, text: str) -> str:
+        """Remove tool call markers and JSON from text response."""
+        import re
+        
+        # Remove <|channel|>...<|message|> patterns
+        text = re.sub(r'<\|[^|]+\|>[^<]*', '', text)
+        
+        # Remove tool call JSON patterns
+        text = re.sub(r'\{"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\}', '', text)
+        
+        return text.strip()
 
     async def _execute_tool_calls(
         self,

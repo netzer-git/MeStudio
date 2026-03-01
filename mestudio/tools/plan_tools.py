@@ -142,12 +142,12 @@ def _save_plan(plan: TaskPlan) -> Path:
     name="create_plan",
     description="Create a new task plan with ordered steps. Use for complex multi-step tasks.",
 )
-async def create_plan(goal: str, steps: list[str]) -> str:
+async def create_plan(goal: str, steps: list[str] | str) -> str:
     """Create a new task plan.
     
     Args:
         goal: The overall goal of the plan.
-        steps: List of step descriptions in order.
+        steps: List of step descriptions in order, or a newline-separated string.
     """
     global _current_plan
     
@@ -159,6 +159,23 @@ async def create_plan(goal: str, steps: list[str]) -> str:
     
     if not goal:
         return "Error: Goal cannot be empty"
+    
+    if not steps:
+        return "Error: Plan must have at least one step"
+    
+    # Handle string input (newline-separated steps)
+    if isinstance(steps, str):
+        # Split by newlines and clean up
+        step_lines = [line.strip() for line in steps.strip().split('\n')]
+        # Remove empty lines and strip leading numbers like "1. ", "2. "
+        import re
+        steps = []
+        for line in step_lines:
+            if line:
+                # Remove leading step numbers
+                cleaned = re.sub(r'^\d+\.\s*', '', line)
+                if cleaned:
+                    steps.append(cleaned)
     
     if not steps:
         return "Error: Plan must have at least one step"
