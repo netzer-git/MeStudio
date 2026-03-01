@@ -434,14 +434,14 @@ async def search_files(
 )
 async def find_files(
     pattern: str,
-    path: str = ".",
+    path: str = "~",
     max_results: int = 100,
 ) -> str:
     """Find files by glob pattern.
     
     Args:
         pattern: Glob pattern (e.g., '*.py' for py files, '**/*.json' recursive, '**/RPG*' folders with RPG).
-        path: Directory to search in (absolute like C:\\Users or relative).
+        path: Directory to search in. Defaults to user's home directory (~). Use absolute paths for other locations.
         max_results: Maximum number of results to return.
     """
     try:

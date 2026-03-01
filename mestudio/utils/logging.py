@@ -124,7 +124,8 @@ def setup_logging(settings: Settings, session_id: str | None = None) -> str:
     
     # Session transcript: detailed log for debugging agent behavior
     # One file per session with full content (messages, tool args, results)
-    transcript_path = log_path.parent / "transcripts" / f"session_{_session_id}.log"
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    transcript_path = log_path.parent / "transcripts" / f"session_{timestamp}_{_session_id}.log"
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
     logger.add(
         str(transcript_path),
