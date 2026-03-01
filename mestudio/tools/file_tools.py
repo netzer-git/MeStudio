@@ -309,6 +309,8 @@ async def list_directory(
             entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
         except PermissionError:
             return [f"{prefix}[permission denied]"]
+        except OSError:
+            return [f"{prefix}[access error]"]
         
         lines = []
         entries_list = list(entries)
@@ -317,14 +319,24 @@ async def list_directory(
             is_last = i == len(entries_list) - 1
             connector = "└── " if is_last else "├── "
             
-            if entry.is_dir():
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                # Broken symlink or inaccessible
+                lines.append(f"{prefix}{connector}{entry.name} [broken link]")
+                continue
+            
+            if is_dir:
                 lines.append(f"{prefix}{connector}{entry.name}/")
                 if recursive and depth < max_depth:
                     extension = "    " if is_last else "│   "
                     lines.extend(tree(entry, prefix + extension, depth + 1))
             else:
-                size = entry.stat().st_size
-                lines.append(f"{prefix}{connector}{entry.name} ({size:,} bytes)")
+                try:
+                    size = entry.stat().st_size
+                    lines.append(f"{prefix}{connector}{entry.name} ({size:,} bytes)")
+                except OSError:
+                    lines.append(f"{prefix}{connector}{entry.name} [inaccessible]")
         
         return lines
     
@@ -379,7 +391,11 @@ async def search_files(
         files = list(resolved.rglob(glob))
     
     for file_path in files:
-        if not file_path.is_file():
+        try:
+            if not file_path.is_file():
+                continue
+        except OSError:
+            # Broken symlink - skip
             continue
         
         if is_binary(file_path):
@@ -447,12 +463,16 @@ async def find_files(
     # Filter to files only and get relative paths
     files = []
     for match in matches[:max_results]:
-        if match.is_file():
-            try:
-                rel = match.relative_to(resolved)
-                files.append(str(rel))
-            except ValueError:
-                files.append(str(match))
+        try:
+            if match.is_file():
+                try:
+                    rel = match.relative_to(resolved)
+                    files.append(str(rel))
+                except ValueError:
+                    files.append(str(match))
+        except OSError:
+            # Broken symlink - skip
+            continue
     
     if not files:
         return f"No files found matching '{pattern}'"
