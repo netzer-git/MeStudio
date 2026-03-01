@@ -1,7 +1,7 @@
 # MeStudio Agent — Implementation Plan
 
 > **Local AI Agent Orchestrator** powered by gpt-oss-20b via LM Studio  
-> Status: **IN PROGRESS — Steps 1-4 + Logging Complete** | Last updated: 2026-03-01
+> Status: **IN PROGRESS — Steps 1-5 + Logging Complete** | Last updated: 2026-03-01
 
 ---
 
@@ -442,30 +442,34 @@ This is the most important part of the system. Three tiers of memory with five d
 
 ---
 
-### Step 5: Task Planner
+### Step 5: Task Planner ✅ COMPLETE
 
 **File:** `mestudio/planner/task_planner.py`
 
-- [ ] `TaskPlanner` class
-  - `async decompose(task_description, llm_client) -> TaskPlan`:
-    - Call LLM with structured output to break a complex task into ordered steps
-    - System prompt: "Break this task into 3-10 concrete, actionable steps. Each step should be small enough to complete in one focused action."
-    - Returns validated `TaskPlan` via Pydantic
-  - Planning is **not auto-triggered by heuristics** (avoids false positives like "don't create anything"). Instead:
-    - The `create_plan` tool is always available to the LLM — it decides when planning is appropriate based on task complexity
+- [x] `TaskPlanner` class
+  - `decompose(task_description, llm_client) -> TaskPlan` — uses JSON Schema structured output for validated responses
+  - `refine_plan(plan, feedback, llm_client) -> TaskPlan` — refines existing plan based on feedback
+  - `estimate_complexity(task, llm_client) -> dict` — estimates task complexity (simple/moderate/complex)
+  - System prompt instructs LLM to create 3-10 concrete, actionable steps
+  - Returns validated `TaskPlan` via Pydantic
+  - Planning is **not auto-triggered by heuristics** (avoids false positives). Instead:
+    - The `create_plan` tool is always available to the LLM
     - User can explicitly request planning via the `/plan` command
-    - The system prompt instructs the LLM: "For complex multi-step tasks, create a plan first using create_plan"
 
 **File:** `mestudio/planner/tracker.py`
 
-- [ ] `PlanTracker` class
+- [x] `PlanTracker` class
   - Holds current `TaskPlan` (if any)
   - `next_step() -> PlanStep | None` — return next pending step, respecting dependencies
+  - `start_step(index)` — mark step as in progress
   - `mark_done(index, notes?)` / `mark_failed(index, notes?)`
+  - `skip_step(index, reason?)` — skip a step
   - `is_complete() -> bool`
   - `is_stuck() -> bool` — same step failed 3+ times
-  - `get_summary() -> str` — compact plan representation for inclusion in context (always preserved during compaction)
+  - `get_summary() -> str` — compact plan representation for inclusion in context
   - `save(path)` / `load(path)` — persist to `data/plans/`
+
+**Tests:** `tests/test_planner_live.py` — 4 live LLM tests (decompose, complexity, tracking, refinement)
 
 ---
 
