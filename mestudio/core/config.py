@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # File operations
     working_directory: str = "."
     data_directory: str = "./data"
+    sandbox_file_access: bool = True  # If False, agent can access any user-readable file
 
     # Web / browser
     browser_headless: bool = True

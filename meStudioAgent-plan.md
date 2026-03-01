@@ -1,7 +1,7 @@
 # MeStudio Agent — Implementation Plan
 
 > **Local AI Agent Orchestrator** powered by gpt-oss-20b via LM Studio  
-> Status: **IN PROGRESS — Steps 1-6 + Logging Complete** | Last updated: 2026-03-01
+> Status: **IN PROGRESS — Steps 1-7 + Logging Complete** | Last updated: 2026-03-01
 
 ---
 
@@ -378,7 +378,9 @@ This is the most important part of the system. Three tiers of memory with five d
 - [x] `search_files(query, path=".", glob="*", max_results=20)` — Grep-like search. Return matching lines with file:line:content format.
 - [x] `find_files(pattern, path=".")` — Glob-based find. Return list of matching paths.
 - [x] All paths resolved relative to `WORKING_DIRECTORY` from config
-- [x] **Safety:** Refuse to write/edit outside `WORKING_DIRECTORY`. Prompt user for confirmation on destructive operations via CLI callback.
+- [x] **Safety:** Configurable via `sandbox_file_access` setting:
+  - `true` (default): Refuse to access files outside `WORKING_DIRECTORY`
+  - `false`: Allow access to any user-readable file on the system (set via `MESTUDIO_SANDBOX_FILE_ACCESS=false` in .env)
 
 #### 4c. Web Tools — `mestudio/tools/web_tools.py`
 
@@ -517,11 +519,11 @@ This is the most important part of the system. Three tiers of memory with five d
 
 ---
 
-### Step 7: Orchestrator
+### Step 7: Orchestrator  ✅ COMPLETE
 
 **File:** `mestudio/core/orchestrator.py`
 
-- [ ] `Orchestrator` class — the main agent loop:
+- [x] `Orchestrator` class — the main agent loop:
   ```python
   class Orchestrator:
       llm_client: LMStudioClient
@@ -534,7 +536,7 @@ This is the most important part of the system. Three tiers of memory with five d
   ```
   - `_llm_semaphore = asyncio.Semaphore(1)` — All LLM calls (orchestrator + sub-agents) acquire this semaphore to prevent concurrent requests to LM Studio, which runs on a single GPU and would queue/OOM otherwise.
 
-- [ ] System prompt (stored in a separate text or constant):
+- [x] System prompt (stored in a separate text or constant):
   ```
   You are MeStudio Agent, a local AI assistant with tool-calling capabilities.
   
@@ -557,7 +559,7 @@ This is the most important part of the system. Three tiers of memory with five d
   - If a plan is wrong or outdated, use cancel_plan or replace_plan to fix it
   ```
 
-- [ ] Main loop pseudocode:
+- [x] Main loop pseudocode:
   ```
   async def run(user_input):
       1. context_manager.add_message(user message)
@@ -577,9 +579,11 @@ This is the most important part of the system. Three tiers of memory with five d
       8. Return
   ```
 
-- [ ] **Max tool loop iterations:** 20 per user turn (prevent runaway)
-- [ ] **Parallel tool calls:** When the LLM returns multiple tool calls in one response, execute them concurrently via `asyncio.gather()` — but serialize file write/edit operations to the same path to prevent conflicts.
-- [ ] **Error handling:** If LLM call fails, retry (max 3 with backoff). If tool fails, return error message as tool result (let LLM decide how to proceed). If context overflow, trigger emergency compaction and retry once.
+- [x] **Max tool loop iterations:** 20 per user turn (prevent runaway)
+- [x] **Parallel tool calls:** When the LLM returns multiple tool calls in one response, execute them concurrently via `asyncio.gather()` — but serialize file write/edit operations to the same path to prevent conflicts.
+- [x] **Error handling:** If LLM call fails, retry (max 3 with backoff). If tool fails, return error message as tool result (let LLM decide how to proceed). If context overflow, trigger emergency compaction and retry once.
+
+**Tests:** `tests/test_orchestrator_live.py` — 17 intensive live LLM tests (17/17 passed)
 
 ---
 
@@ -667,6 +671,7 @@ This is the most important part of the system. Three tiers of memory with five d
       # File operations
       working_directory: str = "."
       data_directory: str = "./data"
+      sandbox_file_access: bool = True  # If False, agent can access any user-readable file
       
       # Web
       browser_headless: bool = True

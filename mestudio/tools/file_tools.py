@@ -29,8 +29,9 @@ def _resolve_path(path: str) -> Path:
         Resolved absolute path.
     
     Raises:
-        ValueError: If path escapes working directory.
+        ValueError: If path escapes working directory (when sandbox enabled).
     """
+    settings = get_settings()
     working_dir = _get_working_dir()
     
     # Resolve the path
@@ -39,13 +40,14 @@ def _resolve_path(path: str) -> Path:
     else:
         resolved = (working_dir / path).resolve()
     
-    # Security check: ensure within working directory
-    try:
-        resolved.relative_to(working_dir)
-    except ValueError:
-        raise ValueError(
-            f"Access denied: '{path}' is outside the working directory"
-        )
+    # Security check: ensure within working directory (if sandbox enabled)
+    if settings.sandbox_file_access:
+        try:
+            resolved.relative_to(working_dir)
+        except ValueError:
+            raise ValueError(
+                f"Access denied: '{path}' is outside the working directory"
+            )
     
     return resolved
 
