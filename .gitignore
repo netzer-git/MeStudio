@@ -1,0 +1,18 @@
+# Environment
+.env
+.venv/
+
+# Data (user sessions, plans)
+data/
+
+# History
+.mestudio_history
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
