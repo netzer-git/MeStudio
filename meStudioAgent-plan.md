@@ -1,7 +1,7 @@
 # MeStudio Agent — Implementation Plan
 
 > **Local AI Agent Orchestrator** powered by gpt-oss-20b via LM Studio  
-> Status: **IN PROGRESS — Steps 1-7 + Logging Complete** | Last updated: 2026-03-01
+> Status: **IN PROGRESS — Steps 1-8 + Logging Complete** | Last updated: 2026-03-01
 
 ---
 
@@ -587,11 +587,11 @@ This is the most important part of the system. Three tiers of memory with five d
 
 ---
 
-### Step 8: CLI Interface
+### Step 8: CLI Interface  ✅ COMPLETE
 
 **File:** `mestudio/cli/interface.py`
 
-- [ ] `CLIInterface` class:
+- [x] `CLIInterface` class:
   - Uses `prompt_toolkit.PromptSession` for input:
     - Multi-line: Enter submits, Alt+Enter for newline (unless inside ``` code fence)
     - History: `FileHistory('.mestudio_history')`
@@ -616,29 +616,40 @@ This is the most important part of the system. Three tiers of memory with five d
 
 **File:** `mestudio/cli/renderers.py`
 
-- [ ] `StreamingMarkdownRenderer`:
+- [x] `StreamingMarkdownRenderer`:
   - Accumulates chunks, re-renders `Markdown` via `Live` at ~10fps
   - Handles partial markdown gracefully (catches render errors, falls back to plain text)
-- [ ] `ToolCallRenderer`:
-  - `start(name, args)` — show spinner panel: "🔧 read_file: src/main.py"
+- [x] `ToolCallRenderer`:
+  - `start(name, args)` — show spinner panel: "[tool] read_file: src/main.py"
   - `finish(name, result, success)` — replace spinner with result panel (truncated preview)
-- [ ] `DiffRenderer`:
+- [x] `DiffRenderer`:
   - Show unified diff with `rich.Syntax` using "diff" lexer
-- [ ] `PlanRenderer`:
-  - Show plan as `rich.Tree` with status emojis: ⬜ pending, 🔄 active, ✅ done, ❌ failed, ⏭️ skipped
-- [ ] `ContextStatusRenderer`:
+- [x] `PlanRenderer`:
+  - Show plan as `rich.Tree` with status ASCII icons: [ ] pending, [>] active, [x] done, [!] failed, [-] skipped
+- [x] `ContextStatusRenderer`:
   - Show `rich.Progress` bar: "Context: ████████░░ 78% (94K/120K tokens) [SOFT COMPACTION]"
+- [x] `ErrorRenderer`:
+  - Show error messages in red panel
+- [x] `HelpRenderer`:
+  - Show command help and welcome message
 
 **File:** `mestudio/cli/theme.py`
 
-- [ ] Color/style constants:
+- [x] Color/style constants:
   - `USER_STYLE = "bold cyan"`
   - `ASSISTANT_STYLE = "white"`
   - `TOOL_STYLE = "bold blue"`
   - `ERROR_STYLE = "bold red"`
   - `SYSTEM_STYLE = "dim yellow"`
   - `SUCCESS_STYLE = "bold green"`
-  - Icon constants for tool types, plan statuses, etc.
+  - ASCII icon constants for tool types, plan statuses (Windows-compatible)
+
+**File:** `mestudio/main.py`
+
+- [x] `AgentApp` class that ties all components together
+- [x] Full CLI main loop with orchestrator integration
+- [x] Slash command handler registration
+- [x] Graceful exit handling
 
 ---
 

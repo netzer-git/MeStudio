@@ -111,3 +111,7 @@ def reload_settings() -> Settings:
     global _settings
     _settings = Settings()
     return _settings
+
+
+# Convenience alias for direct import
+settings = get_settings()
