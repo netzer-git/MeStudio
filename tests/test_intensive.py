@@ -55,7 +55,18 @@ def assert_tools_used(result: TurnResult, *expected_tools: str, label: str = "")
 
 
 def assert_no_error(result: TurnResult, label: str = ""):
-    """Assert the TurnResult has no error."""
+    """Assert the TurnResult has no error.
+    
+    If the error is an LM Studio infrastructure crash (ISE, model crash),
+    mark the test as xfail rather than a hard failure.
+    """
+    if result.error is None:
+        return
+    err = result.error.lower()
+    infra_markers = ["server error", "internal server error", "model has crashed",
+                     "lm studio", "connection refused", "500"]
+    if any(m in err for m in infra_markers):
+        pytest.xfail(f"{label}: LM Studio infrastructure error: {result.error[:120]}")
     assert result.error is None, f"{label}: unexpected error: {result.error}"
 
 
@@ -173,7 +184,6 @@ async def test_research_to_file_pipeline(agent: Orchestrator, workspace: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="LM Studio may crash/ISE under sustained load", strict=False)
 async def test_plan_driven_scaffold(agent: Orchestrator, workspace: Path):
     """Create a plan, then build a 4-file project scaffold tracking progress.
 
@@ -260,7 +270,6 @@ async def test_bug_hunt_and_fix(agent: Orchestrator, workspace: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="LM Studio may crash/ISE under sustained load", strict=False)
 async def test_delegated_research_and_file(agent: Orchestrator, workspace: Path):
     """Delegate to search agent, then file agent (or write directly).
 
