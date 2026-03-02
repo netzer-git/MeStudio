@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 from loguru import logger
-from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
+from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, InternalServerError
 
 from mestudio.core.config import Settings, get_settings
 from mestudio.core.models import (
@@ -115,7 +115,7 @@ class LMStudioClient:
         tools: list[dict[str, Any]] | None = None,
         stream: bool = True,
         response_format: dict[str, Any] | None = None,
-        max_retries: int = 3,
+        max_retries: int = 5,
     ) -> AsyncGenerator[StreamChunk, None] | LLMResponse:
         """Send a chat completion request.
         
@@ -216,15 +216,23 @@ class LMStudioClient:
                 backoff = 2 ** attempt
                 log_llm_retry(attempt + 1, max_retries, str(e), backoff)
                 logger.warning(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}")
+            except InternalServerError as e:
+                last_error = e
+                backoff = min(30, max(5, 3 ** attempt))  # 5, 9, 27, 30
+                logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {backoff}s (ISE recovery)...")
+                    await asyncio.sleep(backoff)
+                continue
             except Exception as e:
                 error_str = str(e)
-                # Retry on LM Studio Internal Server Errors (HTTP 500)
+                # Retry on LM Studio Internal Server Errors (HTTP 500) - fallback string match
                 if "Internal Server Error" in error_str or "500" in error_str:
                     last_error = e
-                    backoff = 2 ** attempt
+                    backoff = min(30, max(5, 3 ** attempt))
                     logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
-                        logger.info(f"Retrying in {backoff}s...")
+                        logger.info(f"Retrying in {backoff}s (ISE recovery)...")
                         await asyncio.sleep(backoff)
                     continue
                 # Don't retry on other errors
@@ -247,7 +255,9 @@ class LMStudioClient:
                 f"Request timed out after {max_retries} attempts"
             ) from last_error
         else:
-            raise LLMClientError("Unknown error") from last_error
+            raise LLMClientError(
+                f"LM Studio server error after {max_retries} retries: {last_error}"
+            ) from last_error
 
     async def _complete_chat(
         self,
@@ -342,12 +352,16 @@ class LMStudioClient:
                 backoff = 2 ** attempt
                 log_llm_retry(attempt + 1, max_retries, str(e), backoff)
                 logger.warning(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}")
+            except InternalServerError as e:
+                last_error = e
+                backoff = min(30, max(5, 3 ** attempt))
+                logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
             except Exception as e:
                 error_str = str(e)
-                # Retry on LM Studio Internal Server Errors (HTTP 500)
+                # Retry on LM Studio Internal Server Errors (HTTP 500) - fallback string match
                 if "Internal Server Error" in error_str or "500" in error_str:
                     last_error = e
-                    backoff = 2 ** attempt
+                    backoff = min(30, max(5, 3 ** attempt))
                     logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
                 else:
                     logger.error(f"Unexpected error in chat: {e}")
@@ -355,9 +369,8 @@ class LMStudioClient:
             
             # Exponential backoff
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.info(f"Retrying in {wait_time}s...")
-                await asyncio.sleep(wait_time)
+                logger.info(f"Retrying in {backoff}s...")
+                await asyncio.sleep(backoff)
         
         # All retries exhausted
         if isinstance(last_error, APIConnectionError):
@@ -369,7 +382,9 @@ class LMStudioClient:
                 f"Request timed out after {max_retries} attempts"
             ) from last_error
         else:
-            raise LLMClientError(str(last_error)) from last_error
+            raise LLMClientError(
+                f"LM Studio server error after {max_retries} retries: {last_error}"
+            ) from last_error
 
     async def structured_output(
         self,

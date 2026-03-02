@@ -62,6 +62,8 @@ async def agent() -> Orchestrator:
     orch = await _get_orchestrator()
     await orch.reset()
     set_context_manager(orch.context)
+    # Brief pause between tests to let LM Studio recover
+    await asyncio.sleep(3)
     return orch
 
 

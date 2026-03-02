@@ -354,7 +354,7 @@ class Orchestrator:
                         # Process stream
                         text_response, tool_calls = await self._process_stream(stream)
                         
-                    except (LLMConnectionError, LLMTimeoutError) as e:
+                    except (LLMClientError, LLMConnectionError, LLMTimeoutError) as e:
                         await self._output.on_error(str(e))
                         result.error = str(e)
                         return result

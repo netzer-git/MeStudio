@@ -105,8 +105,12 @@ async def test_cross_file_refactoring(agent: Orchestrator, workspace: Path):
 
     prompt = (
         f"In the directory {rel(workspace)}, rename the function `old_helper` to "
-        f"`new_helper` everywhere — update the definition in utils.py AND every "
-        f"import and call site in all other Python files."
+        f"`new_helper` everywhere.  Follow these exact steps:\n"
+        f"1. First, use find_files or list_directory to find all .py files in {rel(workspace)}\n"
+        f"2. Read each file to find where old_helper is used\n"
+        f"3. Use edit_file on EACH file to replace `old_helper` with `new_helper` — "
+        f"including the definition in utils.py, imports, and all call sites\n"
+        f"Make sure you edit ALL FOUR files: utils.py, module_a.py, module_b.py, module_c.py."
     )
 
     result = await agent.run(prompt)
@@ -135,9 +139,13 @@ async def test_research_to_file_pipeline(agent: Orchestrator, workspace: Path):
     out_file = workspace / "frameworks_comparison.md"
 
     prompt = (
-        f"Search the web for the top 5 most popular Python web frameworks, "
-        f"then create a file at {rel(out_file)} with a markdown table comparing "
-        f"them. The table should have columns: Name, Description, Use Case."
+        f"Do these steps in order:\n"
+        f"1. Search the web for 'top 5 popular Python web frameworks'\n"
+        f"2. Read any relevant result page\n"
+        f"3. Create a file using write_file at the EXACT path {rel(out_file)} "
+        f"containing a markdown table comparing the top 5 Python web frameworks.  "
+        f"The table MUST have columns: Name, Description, Use Case.  "
+        f"Include frameworks like Flask, Django, and FastAPI."
     )
 
     result = await agent.run(prompt)
