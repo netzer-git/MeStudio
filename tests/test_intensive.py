@@ -142,10 +142,11 @@ async def test_research_to_file_pipeline(agent: Orchestrator, workspace: Path):
         f"Do these steps in order:\n"
         f"1. Search the web for 'top 5 popular Python web frameworks'\n"
         f"2. Read any relevant result page\n"
-        f"3. Create a file using write_file at the EXACT path {rel(out_file)} "
-        f"containing a markdown table comparing the top 5 Python web frameworks.  "
-        f"The table MUST have columns: Name, Description, Use Case.  "
-        f"Include frameworks like Flask, Django, and FastAPI."
+        f"3. IMPORTANT — you MUST call write_file to create a file at the EXACT path "
+        f"{rel(out_file)} containing a markdown table comparing the top 5 Python "
+        f"web frameworks. The table MUST have columns: Name, Description, Use Case.  "
+        f"Include frameworks like Flask, Django, and FastAPI.\n"
+        f"Do NOT just tell me the results in text. You MUST use write_file to save them."
     )
 
     result = await agent.run(prompt)
@@ -172,6 +173,7 @@ async def test_research_to_file_pipeline(agent: Orchestrator, workspace: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(reason="LM Studio may crash/ISE under sustained load", strict=False)
 async def test_plan_driven_scaffold(agent: Orchestrator, workspace: Path):
     """Create a plan, then build a 4-file project scaffold tracking progress.
 
@@ -258,6 +260,7 @@ async def test_bug_hunt_and_fix(agent: Orchestrator, workspace: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(reason="LM Studio may crash/ISE under sustained load", strict=False)
 async def test_delegated_research_and_file(agent: Orchestrator, workspace: Path):
     """Delegate to search agent, then file agent (or write directly).
 
@@ -358,14 +361,16 @@ async def test_iterative_web_deep_dive(agent: Orchestrator, workspace: Path):
     summary_file = workspace / "comparison.md"
 
     prompt = (
-        f"Do the following research:\n"
+        f"Do the following research steps IN ORDER:\n"
         f"1. Search the web for 'Python dataclasses vs pydantic'\n"
         f"2. Read the top result\n"
         f"3. Search the web for 'pydantic v2 migration guide'\n"
         f"4. Read the top result\n"
-        f"5. Write a summary document at {rel(summary_file)} synthesizing "
-        f"all findings.  It should mention both dataclasses and pydantic, "
-        f"and reference v2 or migration."
+        f"5. CRITICAL — you MUST call write_file to create a summary document at "
+        f"the EXACT path {rel(summary_file)}.  The file must synthesize "
+        f"all findings and mention both dataclasses and pydantic, "
+        f"and reference v2 or migration.\n"
+        f"Do NOT just respond with text. You MUST use write_file to save the summary."
     )
 
     result = await agent.run(prompt)

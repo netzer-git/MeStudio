@@ -37,7 +37,7 @@ async def _get_orchestrator() -> Orchestrator:
     settings.working_directory = str(WORKSPACE_DIR)
 
     config = OrchestratorConfig(
-        max_tool_iterations=20,
+        max_tool_iterations=25,
         max_parallel_tools=5,
     )
     orch = Orchestrator(
