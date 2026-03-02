@@ -31,3 +31,9 @@ mestudio = "mestudio.main:cli_entry"
 
 [tool.setuptools.packages.find]
 include = ["mestudio*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "live: tests that require LM Studio running on localhost:1234",
+]

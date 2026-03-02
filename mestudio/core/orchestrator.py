@@ -665,6 +665,15 @@ class Orchestrator:
         self._llm_client.reset_session_stats()
         self._turn_count = 0
         self._file_locks.clear()
+
+        # Clear global plan state so it doesn't leak between sessions
+        from mestudio.tools.plan_tools import set_current_plan
+        set_current_plan(None)
+
+        # Clear tool result cache so stale results don't carry over
+        self._tool_registry.clear_cache()
+        self._tool_registry.reset_call_history()
+
         logger.info("Orchestrator reset")
 
 

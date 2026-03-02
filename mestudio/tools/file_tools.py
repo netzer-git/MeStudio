@@ -278,7 +278,18 @@ async def edit_file(path: str, edits: list[dict[str, str]]) -> str:
     
     content = original
     applied_edits = []
-    
+
+    # Auto-parse if model sent edits as a JSON string instead of a list
+    if isinstance(edits, str):
+        try:
+            import json as _json
+            edits = _json.loads(edits)
+        except Exception:
+            return "Error: 'edits' must be a list of objects with 'old' and 'new' keys."
+    # Wrap a single dict in a list
+    if isinstance(edits, dict):
+        edits = [edits]
+
     for i, edit in enumerate(edits):
         old = edit.get("old", "")
         new = edit.get("new", "")

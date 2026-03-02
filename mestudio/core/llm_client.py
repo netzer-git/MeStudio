@@ -217,6 +217,16 @@ class LMStudioClient:
                 log_llm_retry(attempt + 1, max_retries, str(e), backoff)
                 logger.warning(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}")
             except Exception as e:
+                error_str = str(e)
+                # Retry on LM Studio Internal Server Errors (HTTP 500)
+                if "Internal Server Error" in error_str or "500" in error_str:
+                    last_error = e
+                    backoff = 2 ** attempt
+                    logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                    continue
                 # Don't retry on other errors
                 logger.error(f"Unexpected error in chat stream: {e}")
                 raise LLMClientError(str(e)) from e
@@ -333,8 +343,15 @@ class LMStudioClient:
                 log_llm_retry(attempt + 1, max_retries, str(e), backoff)
                 logger.warning(f"Timeout error (attempt {attempt + 1}/{max_retries}): {e}")
             except Exception as e:
-                logger.error(f"Unexpected error in chat: {e}")
-                raise LLMClientError(str(e)) from e
+                error_str = str(e)
+                # Retry on LM Studio Internal Server Errors (HTTP 500)
+                if "Internal Server Error" in error_str or "500" in error_str:
+                    last_error = e
+                    backoff = 2 ** attempt
+                    logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}): {e}")
+                else:
+                    logger.error(f"Unexpected error in chat: {e}")
+                    raise LLMClientError(str(e)) from e
             
             # Exponential backoff
             if attempt < max_retries - 1:
@@ -352,7 +369,7 @@ class LMStudioClient:
                 f"Request timed out after {max_retries} attempts"
             ) from last_error
         else:
-            raise LLMClientError("Unknown error") from last_error
+            raise LLMClientError(str(last_error)) from last_error
 
     async def structured_output(
         self,
