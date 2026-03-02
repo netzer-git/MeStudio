@@ -53,6 +53,34 @@ def _resolve_path(path: str) -> Path:
     return resolved
 
 
+# Windows file attribute for OneDrive/cloud files that would trigger download
+_FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000
+_FILE_ATTRIBUTE_OFFLINE = 0x1000
+
+
+def is_cloud_file(path: Path) -> bool:
+    """Check if a file is a cloud-only file (OneDrive Files On-Demand).
+    
+    These files exist in name only - accessing content triggers a download.
+    
+    Args:
+        path: Path to check.
+        
+    Returns:
+        True if the file is cloud-only and would require download.
+    """
+    if os.name != 'nt':  # Only relevant on Windows
+        return False
+    
+    try:
+        # st_file_attributes is Windows-specific
+        attrs = path.stat().st_file_attributes  # type: ignore
+        # Check for cloud placeholder or offline attributes
+        return bool(attrs & (_FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | _FILE_ATTRIBUTE_OFFLINE))
+    except (OSError, AttributeError):
+        return False
+
+
 def is_binary(path: Path) -> bool:
     """Check if a file appears to be binary.
     
@@ -117,6 +145,10 @@ async def read_file(
     
     if not resolved.is_file():
         return f"Error: '{path}' is not a file"
+    
+    # Check for cloud-only file (OneDrive)
+    if is_cloud_file(resolved):
+        logger.info(f"Downloading cloud file: {path}")
     
     # Check for binary
     if is_binary(resolved):
@@ -332,11 +364,15 @@ async def list_directory(
                     extension = "    " if is_last else "│   "
                     lines.extend(tree(entry, prefix + extension, depth + 1))
             else:
-                try:
-                    size = entry.stat().st_size
-                    lines.append(f"{prefix}{connector}{entry.name} ({size:,} bytes)")
-                except OSError:
-                    lines.append(f"{prefix}{connector}{entry.name} [inaccessible]")
+                # Check if cloud-only to avoid triggering download
+                if is_cloud_file(entry):
+                    lines.append(f"{prefix}{connector}{entry.name} [cloud]")
+                else:
+                    try:
+                        size = entry.stat().st_size
+                        lines.append(f"{prefix}{connector}{entry.name} ({size:,} bytes)")
+                    except OSError:
+                        lines.append(f"{prefix}{connector}{entry.name} [inaccessible]")
         
         return lines
     
@@ -390,12 +426,19 @@ async def search_files(
     else:
         files = list(resolved.rglob(glob))
     
+    skipped_cloud = 0
+    
     for file_path in files:
         try:
             if not file_path.is_file():
                 continue
         except OSError:
             # Broken symlink - skip
+            continue
+        
+        # Skip cloud-only files to avoid triggering downloads
+        if is_cloud_file(file_path):
+            skipped_cloud += 1
             continue
         
         if is_binary(file_path):
@@ -419,11 +462,16 @@ async def search_files(
             break
     
     if not results:
-        return f"No matches found for '{query}' in {files_searched} files"
+        msg = f"No matches found for '{query}' in {files_searched} files"
+        if skipped_cloud > 0:
+            msg += f" ({skipped_cloud} cloud-only files skipped)"
+        return msg
     
     header = f"Found {len(results)} match(es) for '{query}'"
     if len(results) == max_results:
         header += f" (limited to {max_results})"
+    if skipped_cloud > 0:
+        header += f" [{skipped_cloud} cloud files skipped]"
     
     return header + "\n\n" + "\n".join(results)
 
@@ -464,6 +512,7 @@ async def find_files(
     
     # Get relative paths, optionally including directories
     results = []
+    cloud_count = 0
     for match in matches[:max_results]:
         try:
             is_dir = match.is_dir()
@@ -476,6 +525,10 @@ async def find_files(
             try:
                 rel = match.relative_to(resolved)
                 suffix = "/" if is_dir else ""
+                # Mark cloud-only files
+                if is_file and is_cloud_file(match):
+                    suffix = " [cloud]"
+                    cloud_count += 1
                 results.append(str(rel) + suffix)
             except ValueError:
                 results.append(str(match))
