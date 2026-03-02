@@ -34,7 +34,9 @@ def _resolve_path(path: str) -> Path:
     settings = get_settings()
     working_dir = _get_working_dir()
     
-    # Resolve the path (handle ~ for home directory)
+    # Resolve the path (handle ~ for home directory, empty string -> working dir)
+    if not path or not path.strip():
+        path = "."
     path_obj = Path(path).expanduser()
     if path_obj.is_absolute():
         resolved = path_obj.resolve()
@@ -81,10 +83,22 @@ def is_cloud_file(path: Path) -> bool:
         return False
 
 
+# Known binary file extensions that should never be text-searched
+_BINARY_EXTENSIONS = {
+    '.pdf', '.epub', '.mobi',  # Documents
+    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',  # Office
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',  # Archives
+    '.exe', '.dll', '.so', '.dylib',  # Executables
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.webp',  # Images
+    '.mp3', '.mp4', '.wav', '.avi', '.mkv', '.mov', '.flac',  # Media
+    '.ttf', '.otf', '.woff', '.woff2',  # Fonts
+}
+
+
 def is_binary(path: Path) -> bool:
     """Check if a file appears to be binary.
     
-    Sniffs the first 8192 bytes for null bytes.
+    Checks known binary extensions first, then sniffs for null bytes.
     
     Args:
         path: Path to the file.
@@ -92,6 +106,10 @@ def is_binary(path: Path) -> bool:
     Returns:
         True if file appears binary, False otherwise.
     """
+    # Check known binary extensions first
+    if path.suffix.lower() in _BINARY_EXTENSIONS:
+        return True
+    
     try:
         with open(path, "rb") as f:
             chunk = f.read(8192)
@@ -387,7 +405,7 @@ async def list_directory(
 
 @tool(
     name="search_files",
-    description="Search for text pattern in files (grep-like). Returns matching lines. Supports absolute paths.",
+    description="Search for text pattern in TEXT files (grep-like). NOTE: PDFs and binary files are skipped - use filenames or web_search for PDF content. Returns matching lines. Supports absolute paths.",
 )
 async def search_files(
     query: str,
@@ -427,6 +445,7 @@ async def search_files(
         files = list(resolved.rglob(glob))
     
     skipped_cloud = 0
+    skipped_binary = 0
     
     for file_path in files:
         try:
@@ -442,6 +461,7 @@ async def search_files(
             continue
         
         if is_binary(file_path):
+            skipped_binary += 1
             continue
         
         files_searched += 1
@@ -462,7 +482,9 @@ async def search_files(
             break
     
     if not results:
-        msg = f"No matches found for '{query}' in {files_searched} files"
+        msg = f"No matches found for '{query}' in {files_searched} text files"
+        if skipped_binary > 0:
+            msg += f" ({skipped_binary} binary/PDF files skipped - cannot search PDF content)"
         if skipped_cloud > 0:
             msg += f" ({skipped_cloud} cloud-only files skipped)"
         return msg
@@ -470,6 +492,8 @@ async def search_files(
     header = f"Found {len(results)} match(es) for '{query}'"
     if len(results) == max_results:
         header += f" (limited to {max_results})"
+    if skipped_binary > 0:
+        header += f" [{skipped_binary} binary files skipped]"
     if skipped_cloud > 0:
         header += f" [{skipped_cloud} cloud files skipped]"
     

@@ -59,6 +59,7 @@ Search Strategy (IMPORTANT):
 3. AFTER finding a folder, use list_directory to see what's inside
 4. If a folder doesn't exist, tell the user - don't keep searching
 5. Limit max_results to 20-50 for faster results
+6. PDF/binary files: search_files CANNOT read PDF content - identify items by FILENAME, then use web_search if you need descriptions
 
 Guidelines:
 - For complex multi-step tasks, create a plan first using create_plan
